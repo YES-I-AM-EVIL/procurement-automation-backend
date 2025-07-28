@@ -1,0 +1,29 @@
+shop: Магазин электроники
+categories:
+  - id: 1
+    name: Ноутбуки
+  - id: 2
+    name: Смартфоны
+goods:
+  - id: 1
+    category: 1
+    name: Ноутбук Lenovo
+    model: IdeaPad 5
+    price: 45000
+    price_rrc: 50000
+    quantity: 10
+    parameters:
+      Диагональ: "15.6"
+      Процессор: "Intel Core i5"
+      Оперативная память: "16 ГБ"
+  - id: 2
+    category: 2
+    name: Смартфон Samsung
+    model: Galaxy S21
+    price: 60000
+    price_rrc: 65000
+    quantity: 15
+    parameters:
+      Диагональ: "6.2"
+      Процессор: "Exynos 2100"
+      Память: "128 ГБ"

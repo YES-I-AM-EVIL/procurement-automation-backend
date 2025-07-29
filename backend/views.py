@@ -1,22 +1,22 @@
 from django.shortcuts import render
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
+from django.contrib.auth import authenticate
+from django.shortcuts import get_object_or_404
+from django.db import IntegrityError
+from django.core.mail import send_mail
+from django.conf import settings
 from requests import get
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from yaml import load as load_yaml, Loader
-from django.db import IntegrityError
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
-from django.contrib.auth import authenticate
-from django.shortcuts import get_object_or_404
+from rest_framework.permissions import IsAuthenticated
+from yaml import load as load_yaml, Loader
 from .serializers import UserSerializer, ContactSerializer, ProductInfoSerializer, OrderSerializer
-from django.core.mail import send_mail
-from django.conf import settings
-from .tasks import send_order_confirmation_task
-
-from .models import Shop, Category, Product, ProductInfo, Parameter, ProductParameter, ConfirmEmailToken, User
+from .models import Shop, Category, Product, ProductInfo, Parameter, ProductParameter, ConfirmEmailToken, User, Order, OrderItem
+from .permissions import IsSupplier 
 
 class PartnerUpdate(APIView):
     """
@@ -100,21 +100,44 @@ class PartnerUpdate(APIView):
     
 class RegisterUser(generics.CreateAPIView):
     """
-    Регистрация пользователя.
-    При успешной регистрации отправляет email с подтверждением.
+    Регистрация пользователя с подтверждением email
+    Отправляет токен подтверждения на указанный email
     """
     serializer_class = UserSerializer
 
     def post(self, request, *args, **kwargs):
-        serializer = UserSerializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.save()
-            user.set_password(request.data['password'])
-            user.save()
-            token, _ = Token.objects.get_or_create(user=user)
-            return Response({'Status': True, 'Token': token.key})
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        user = serializer.save()
+        user.set_password(request.data['password'])
+        user.is_active = False  # Активируется после подтверждения email
+        user.save()
+
+        # Создаем и отправляем токен подтверждения
+        token = ConfirmEmailToken.objects.create(user=user)
+        self._send_confirmation_email(user.email, token.key)
+        
+        return Response(
+            {'Status': True, 'Message': 'Письмо с подтверждением отправлено'},
+            status=status.HTTP_201_CREATED
+        )
+
+    def _send_confirmation_email(self, email, token):
+        """Вспомогательный метод для отправки email"""
+        message = f"""
+        Для подтверждения регистрации перейдите по ссылке:
+        http://127.0.0.1:8000/api/user/confirm?token={token}
+        """
+        send_mail(
+            subject='Подтверждение регистрации',
+            message=message.strip(),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+            fail_silently=False
+        )
+        
 class LoginUser(generics.GenericAPIView):
     def post(self, request, *args, **kwargs):
         email = request.data.get('email')
@@ -217,13 +240,17 @@ class OrderConfirmView(generics.GenericAPIView):
         try:
             order = Order.objects.get(user=request.user, state='basket')
             contact = Contact.objects.get(id=contact_id, user=request.user)
+
+            # Проверка перед подтверждением заказа
+            for item in order.ordered_items.all():
+                if not item.product_info.shop.state:
+                    return Response({'Status': False, 'Error': f'Магазин {item.product_info.shop.name} не принимает заказы'})
+                if item.product_info.quantity < item.quantity:
+                    return Response({'Status': False, 'Error': f'Недостаточно товара {item.product_info.product.name}'})
             
             order.contact = contact
             order.state = 'new'
             order.save()
-            
-            # Отправка email с подтверждением заказа
-            send_order_confirmation_task.delay(order.id, request.user.email)
             
             return Response({'Status': True})
         except Order.DoesNotExist:
@@ -255,7 +282,7 @@ class OrderConfirmView(generics.GenericAPIView):
             settings.DEFAULT_FROM_EMAIL,
             [email],
             fail_silently=False,
-        )
+        )   
 
 class OrderListView(generics.ListAPIView):
     serializer_class = OrderSerializer
@@ -287,35 +314,39 @@ class ConfirmEmail(generics.GenericAPIView):
             return Response({'Status': False, 'Error': 'Неверный токен'}, 
                           status=status.HTTP_404_NOT_FOUND)
 
-class RegisterUser(generics.CreateAPIView):
-    """
-    Класс для регистрации пользователей с отправкой токена подтверждения
-    """
-    serializer_class = UserSerializer
+    
+def send_order_to_admin(order):
+    items = OrderItem.objects.filter(order=order)
+    message = f"Новый заказ #{order.id}\n\n"
+    message += "\n".join(f"{item.product_info.product.name} - {item.quantity} шт." for item in items)
+    send_mail(
+        'Накладная по заказу',
+        message,
+        settings.DEFAULT_FROM_EMAIL,
+        [settings.ADMIN_EMAIL],
+        fail_silently=False,
+    )
 
-    def post(self, request, *args, **kwargs):
-        serializer = UserSerializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.save()
-            user.is_active = False  # Пользователь неактивен до подтверждения email
-            user.set_password(request.data['password'])
-            user.save()
-            
-            # Создаем и отправляем токен подтверждения
-            token = ConfirmEmailToken.objects.create(user=user)
-            
-            # Отправка email с подтверждением
-            message = f"""
-            Для подтверждения email перейдите по ссылке:
-            http://127.0.0.1:8000/api/user/confirm?token={token.key}
-            """
-            send_mail(
-                'Подтверждение регистрации',
-                message,
-                settings.EMAIL_HOST_USER,
-                [user.email],
-                fail_silently=False,
-            )
-            
-            return Response({'Status': True, 'Message': 'Письмо с подтверждением отправлено'})
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+class SupplierOrders(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsSupplier]
+
+    def get(self, request):
+        orders = Order.objects.filter(
+            ordered_items__product_info__shop__user=request.user
+        ).distinct()
+        serializer = OrderSerializer(orders, many=True)
+        return Response(serializer.data)
+    
+class ExportProducts(APIView):
+    def get(self, request):
+        products = ProductInfo.objects.all()
+        data = [{
+            'name': p.product.name,
+            'price': p.price,
+            'quantity': p.quantity
+        } for p in products]
+        return Response(data)
+    
+class IsSupplier(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return request.user.type == 'shop'

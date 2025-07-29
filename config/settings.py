@@ -165,3 +165,8 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'API для автоматизации закупок',
     'VERSION': '1.0.0',
 }
+
+SKIP_EMAIL_CONFIRMATION = False  # Для тестов можно временно включить
+
+# Email администратора для получения накладных
+ADMIN_EMAIL = 'ваш_email@example.com'  # Замените на реальный email

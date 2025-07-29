@@ -81,7 +81,6 @@ class User(AbstractUser):
         verbose_name_plural = "Список пользователей"
         ordering = ('email',)
 
-    is_active = models.BooleanField(default=False)
 
     def send_confirmation_email(self):
         token, _ = ConfirmEmailToken.objects.get_or_create(user=self)

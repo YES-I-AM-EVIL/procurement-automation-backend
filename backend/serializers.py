@@ -1,13 +1,13 @@
 from rest_framework import serializers
 from .models import User, Product, ProductInfo, Order, OrderItem, Contact
 from .validators import validate_password, validate_phone
+from django.contrib.auth.password_validation import validate_password
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
         write_only=True,
-        validators=[validate_password],
-        style={'input_type': 'password'}
-    )
+        validators=[validate_password]
+        )
     
     class Meta:
         model = User

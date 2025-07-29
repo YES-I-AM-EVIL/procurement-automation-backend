@@ -2,6 +2,7 @@ from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from django.conf import settings
 from django_rest_passwordreset.tokens import get_token_generator
 
 # Константы для выбора значений
@@ -20,6 +21,7 @@ USER_TYPE_CHOICES = (
     ('buyer', 'Покупатель'),
 )
 
+DEFAULT_FROM_EMAIL = settings.DEFAULT_FROM_EMAIL
 
 class UserManager(BaseUserManager):
     """Кастомный менеджер пользователей с email в качестве идентификатора"""
@@ -90,11 +92,11 @@ class User(AbstractUser):
         http://127.0.0.1:8000/api/user/confirm?token={token.key}
         """
         send_mail(
-            'Подтверждение ренистрации',
+            'Подтверждение регистрации',
             message,
             DEFAULT_FROM_EMAIL,
             [self.email],
-            fail_silenty=False
+            fail_silently=False
         )
 
 

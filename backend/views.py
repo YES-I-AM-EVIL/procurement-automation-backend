@@ -14,7 +14,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.permissions import IsAuthenticated
 from yaml import load as load_yaml, Loader
 from .serializers import UserSerializer, ContactSerializer, ProductInfoSerializer, OrderSerializer
-from .models import Shop, Category, Product, ProductInfo, Parameter, ProductParameter, ConfirmEmailToken, User, Order, OrderItem
+from .models import Shop, Category, Product, ProductInfo, Parameter, ProductParameter, ConfirmEmailToken, User, Order, OrderItem, Contact
 from .permissions import IsSupplier 
 
 class PartnerUpdate(APIView):
@@ -234,7 +234,10 @@ class OrderConfirmView(generics.GenericAPIView):
     def post(self, request, *args, **kwargs):
         contact_id = request.data.get('contact_id')
         if not contact_id:
-            return Response({'Status': False, 'Error': 'Не указан контакт'})
+            return Response(
+                {'Status': False, 'Error': 'Не указан контакт'},
+                status=400
+            )
             
         try:
             order = Order.objects.get(user=request.user, state='basket')
@@ -243,19 +246,37 @@ class OrderConfirmView(generics.GenericAPIView):
             # Проверка перед подтверждением заказа
             for item in order.ordered_items.all():
                 if not item.product_info.shop.state:
-                    return Response({'Status': False, 'Error': f'Магазин {item.product_info.shop.name} не принимает заказы'})
+                    return Response(
+                        {'Status': False, 'Error': f'Магазин {item.product_info.shop.name} не принимает заказы'},
+                        status=400    
+                )
                 if item.product_info.quantity < item.quantity:
-                    return Response({'Status': False, 'Error': f'Недостаточно товара {item.product_info.product.name}'})
+                    return Response(
+                        {'Status': False, 'Error': f'Недостаточно товара {item.product_info.product.name}'},
+                        status=400
+                    )
             
+            # Подтверждение заказа
             order.contact = contact
             order.state = 'new'
             order.save()
+
+            # Отправка писем
+            self.send_order_email(order, request.user.email) # Клиенту
+            send_order_to_admin(order) # Администратору
             
             return Response({'Status': True})
+        
         except Order.DoesNotExist:
-            return Response({'Status': False, 'Error': 'Нет активной корзины'})
+            return Response(
+                {'Status': False, 'Error': 'Нет активной корзины'},
+                status=400
+            )
         except Contact.DoesNotExist:
-            return Response({'Status': False, 'Error': 'Контакт не найден'})
+            return Response(
+                {'Status': False, 'Error': 'Контакт не найден'},
+                status=400
+            )
         
     def send_order_email(self, order, email):
         items = OrderItemSerializer(
